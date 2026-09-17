@@ -1,4 +1,5 @@
 # Coherent Interference Neural Networks (CINN)
+nBADGE_MARKDOWN_HERE
 
 **Paper 1 of a planned 12-paper research program.**
 
