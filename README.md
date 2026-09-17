@@ -1,5 +1,5 @@
 # Coherent Interference Neural Networks (CINN)
-nBADGE_MARKDOWN_HERE
+[![DOI](https://zenodo.org/badge/1374213364.svg)](https://doi.org/10.5281/zenodo.22810693)
 
 **Paper 1 of a planned 12-paper research program.**
 
