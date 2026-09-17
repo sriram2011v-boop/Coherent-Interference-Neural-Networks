@@ -1,0 +1,19 @@
+# LaTeX compile artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+
+# OS files
+.DS_Store
+Thumbs.db

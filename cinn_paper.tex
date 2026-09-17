@@ -1,0 +1,203 @@
+\documentclass[11pt]{article}
+
+\usepackage{arxiv}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+
+\title{Coherent Interference Neural Networks: Phase-Based Multi-State Encoding for Parameter-Efficient Learning}
+
+\author{
+  Ventrapragada Sriram \\
+  Independent Researcher \\
+  Visakhapatnam, India \\
+  \texttt{Sriram.2011.v@gmail.com}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Standard artificial neurons combine inputs through real-valued weighted sums, collapsing all information about an input into a single scalar activation. We propose the Coherent Interference Neuron (CIN), a unit that instead represents each connection with a complex amplitude--phase pair and combines inputs through wave-like interference rather than linear summation. Each CIN factorizes its amplitude and phase parameters at low rank $r$, producing a per-neuron complex state $\psi_j = \sum_k R_{jk} \, x_k \, e^{i\Theta_{jk}}$, which is then collapsed to a real output via a Born-rule-inspired readout $|\psi_j|^2$, normalized by its running mean. We integrate CIN layers into a small convolutional backbone and evaluate on CIFAR-10. A CNN+CINN hybrid using 301K parameters reaches 75.1\% test accuracy after 50 epochs, compared to 55.4\% for a parameter-matched MLP baseline using 887K parameters -- a substantial accuracy improvement at roughly one-third the parameter count. We characterize two structural phenomena of the architecture: a rank threshold effect, below which interference provides no benefit over a real-valued baseline, occurring near $r \approx \sqrt{d_{\text{hidden}}}$; and a depth collapse beyond two stacked CIN layers, which we attribute to phase error accumulation through repeated $\cos/\sin$ evaluations. We describe the resulting training recipe -- including separate learning rates and weight decay schedules for amplitude and phase parameters -- and discuss why interference-based combination may offer a parameter-efficient alternative to linear layers for certain regimes. This is the first paper in a planned twelve-paper research program extending Coherent Interference Neural Networks to transformers, graph neural networks, recurrent architectures, reinforcement learning, natural language processing, and generative models.
+\end{abstract}
+
+\keywords{neural network architectures \and complex-valued neural networks \and parameter efficiency \and interference \and phase encoding \and image classification}
+
+\section{Introduction}
+\label{sec:intro}
+
+The dominant computational primitive in artificial neural networks is the linear combination of inputs, $z_j = \sum_k w_{jk} x_k$, followed by a pointwise nonlinearity. This primitive has proven remarkably effective and scalable, but it discards a large amount of structure available to it: each connection contributes only a single real-valued weight, and the aggregation is a plain sum with no mechanism for inputs to reinforce or cancel one another based on a relational property beyond magnitude and sign.
+
+Physical systems that compute via wave interference -- optical, acoustic, and quantum systems -- use a richer combination rule. Each contributing wave carries both an amplitude and a phase, and the total observed intensity at a point depends on how those phases align: coherent superposition can amplify or cancel contributions independently of their individual magnitudes. This paper asks a narrow, practical question: if we equip an artificial neuron with a phase in addition to a weight, and combine its inputs by coherent superposition instead of linear summation, does the added structure buy us anything in terms of parameter efficiency?
+
+We introduce the \textbf{Coherent Interference Neuron (CIN)}, a drop-in unit that replaces the standard weighted sum with a complex-valued interference computation, factorized at low rank to keep the parameter count tractable. We do not aim to replace convolutional feature extraction; instead we use a small convolutional backbone for local feature extraction and place CIN layers where a standard network would place fully-connected layers, so that the comparison between CINN and a real-valued baseline isolates the effect of the combination rule itself.
+
+Our contributions are:
+\begin{itemize}
+    \item \textbf{A phase-based neuron formulation} (the CIN) with a low-rank amplitude--phase factorization that keeps parameter growth linear in rank rather than quadratic in width.
+    \item \textbf{An empirical demonstration on CIFAR-10} that a CNN+CINN hybrid at 301K parameters outperforms a parameter-heavier real-valued MLP baseline (887K parameters), 75.1\% vs.\ 55.4\% test accuracy after 50 epochs.
+    \item \textbf{Two characterized failure/threshold modes}: a minimum-rank threshold below which interference provides no advantage, and a depth collapse beyond two CIN layers caused by accumulating phase error through repeated trigonometric evaluation.
+    \item \textbf{A training recipe} for CIN-based networks, including separated learning rates and weight decay for amplitude vs.\ phase parameters, which we found necessary for stable convergence.
+\end{itemize}
+
+This paper is the first installment in a planned twelve-paper research program investigating Coherent Interference Neural Networks across architectural families, including transformers, graph neural networks, recurrent networks, reinforcement learning agents, NLP models, and generative models. The present paper establishes the core CIN primitive and its behavior in the simplest setting: a convolutional image classifier.
+
+\section{Related Work}
+\label{sec:related}
+
+\textbf{Complex-valued neural networks.} Prior work has explored complex-valued weights and activations, motivated variously by signal processing applications, richer representational capacity, and biological plausibility of oscillatory neural codes. These approaches typically maintain complex weights throughout a network and require complex-valued nonlinearities and normalization schemes. CINN differs in scope: phase is used specifically to modulate an interference-style combination rule at the neuron level, with a real-valued (intensity) readout after each CIN layer, so complex arithmetic is localized rather than propagated end-to-end.
+
+\textbf{Low-rank parameterizations.} Low-rank factorization of weight matrices is a standard technique for parameter reduction, from low-rank adaptation methods to structured pruning. We apply the same low-rank principle to \emph{both} the amplitude and phase parameter tensors of the CIN, which is, to our knowledge, not previously explored in combination with interference-based neuron combination rules.
+
+\textbf{Oscillatory and phase-based models.} Phase and synchrony-based models of computation have long been studied in computational neuroscience as a candidate mechanism for feature binding, and periodic activation functions have been explored in implicit neural representations. Our work differs in using phase specifically as a per-connection interference parameter within an otherwise standard supervised deep learning pipeline, rather than as an activation function or synchrony mechanism.
+
+\section{Coherent Interference Neurons}
+\label{sec:method}
+
+\subsection{Motivation}
+A standard neuron computes $z_j = \sum_k w_{jk} x_k$: every input contributes to the output in proportion to a single scalar weight, and the contributions add algebraically regardless of any relationship between them. In a wave-interference system, each contribution instead carries a phase, and the total is $\psi_j = \sum_k A_{jk} e^{i\phi_{jk}}$, with the physically observable output being the intensity $|\psi_j|^2$. Two inputs with well-aligned phases reinforce each other multiplicatively in effect; two inputs with opposed phases can cancel even if both have large amplitude. We hypothesize that this gives the network an additional, cheap mechanism -- phase alignment -- for expressing relationships between inputs that would otherwise require additional weight capacity to approximate.
+
+\subsection{The Coherent Interference Neuron}
+Each CIN layer maps an input vector $x \in \mathbb{R}^{d_{\text{in}}}$ to an output vector $y \in \mathbb{R}^{d_{\text{out}}}$. For output unit $j$, the pre-collapse complex state is
+\begin{equation}
+    \psi_j = \sum_{k=1}^{d_{\text{in}}} R_{jk} \, x_k \, e^{i \Theta_{jk}},
+    \label{eq:psi}
+\end{equation}
+where $R_{jk} \in \mathbb{R}$ is an amplitude coefficient and $\Theta_{jk} \in \mathbb{R}$ is a phase, for each input--output connection $(j,k)$.
+
+\textbf{Low-rank factorization.} Storing $R$ and $\Theta$ as full $d_{\text{out}} \times d_{\text{in}}$ matrices would make each CIN layer as expensive as two linear layers. Instead we factorize each at rank $r \ll \min(d_{\text{in}}, d_{\text{out}})$:
+\begin{equation}
+    R = U_R V_R^\top, \qquad \Theta = U_\Theta V_\Theta^\top,
+\end{equation}
+with $U_R, U_\Theta \in \mathbb{R}^{d_{\text{out}} \times r}$ and $V_R, V_\Theta \in \mathbb{R}^{d_{\text{in}} \times r}$. This reduces the parameter count of a CIN layer from $O(d_{\text{in}} d_{\text{out}})$ to $O(r (d_{\text{in}} + d_{\text{out}}))$, matching the scaling of a low-rank linear layer while carrying twice the parameter groups (amplitude and phase).
+
+\textbf{Born-rule readout.} The complex state $\psi_j$ is not directly usable as a real-valued activation for a downstream real-valued layer. We collapse it to a real output via a Born-rule-inspired intensity readout,
+\begin{equation}
+    y_j = \frac{\text{Re}(\psi_j)^2 + \text{Im}(\psi_j)^2}{\mathbb{E}[\, \text{Re}(\psi)^2 + \text{Im}(\psi)^2 \,]},
+    \label{eq:born}
+\end{equation}
+where the denominator is a running mean of the intensity across the layer (analogous to a normalization statistic), used to keep the output scale stable across training and comparable to the scale a real-valued layer would produce. This mirrors the Born rule's role in converting a complex quantum amplitude into an observable probability, without our claiming any physical correspondence to quantum computation.
+
+\subsection{Network Architecture}
+We integrate CIN layers into a standard convolutional pipeline rather than using them for local feature extraction. Local translation-invariant feature extraction is a task convolution already performs efficiently; our interest is in whether CIN layers offer benefits at the stage where a standard architecture would use fully-connected layers.
+
+The CNN+CINN architecture used in our experiments is:
+\begin{enumerate}
+    \item Convolutional backbone: $3 \to 16 \to 32$ channels (standard conv + pooling stages).
+    \item Flatten and linear projection to a 128-dimensional hidden representation.
+    \item Two stacked CIN layers, each with factorization rank $r = 32$.
+    \item Linear classification head to 10 output classes (CIFAR-10).
+\end{enumerate}
+The baseline MLP replaces steps 2--3 with real-valued fully-connected layers of matched depth, sized so that its total parameter count (887K) exceeds that of the CINN model (301K); this is a conservative comparison, since it means the baseline has nearly three times the representational budget of the CINN model as conventionally measured.
+
+\section{Training Procedure}
+\label{sec:training}
+
+Because amplitude and phase parameters play structurally different roles -- amplitude scales a contribution, phase determines how it interferes with others -- we found that treating them identically under a single optimizer configuration led to unstable or slow convergence. Our final recipe uses three parameter groups under AdamW:
+
+\begin{itemize}
+    \item \textbf{Amplitude parameters}: learning rate $1\times10^{-3}$, weight decay $1\times10^{-4}$.
+    \item \textbf{Phase parameters}: learning rate $1\times10^{-4}$ (an order of magnitude lower), weight decay $0$.
+    \item \textbf{All other parameters} (convolutional and linear layers): learning rate $1\times10^{-3}$, weight decay $1\times10^{-4}$.
+\end{itemize}
+
+The lower phase learning rate reflects the fact that $\Theta$ enters the model through $\cos$ and $\sin$, so its effective gradient sensitivity differs from a linear parameter's; large phase updates can cause large, non-monotonic changes in $\psi_j$. Removing weight decay from phase parameters avoids pulling phases toward zero, which would degenerate the interference mechanism toward a purely amplitude-driven (i.e., ordinary linear) computation.
+
+Additional training details: cosine annealing learning rate schedule, gradient clipping at global norm 1.0, label smoothing of 0.1, batch size 128, and 50 training epochs on CIFAR-10.
+
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+We evaluate on CIFAR-10 (10-class natural image classification, $32\times32$ RGB images). We compare the CNN+CINN hybrid described in Section~\ref{sec:method} against a parameter-heavier real-valued MLP baseline of matched depth, under the training recipe of Section~\ref{sec:training} applied identically to both models where applicable (the MLP baseline uses a single learning rate and weight decay setting for all parameters, as it has no phase parameters).
+
+\subsection{Main Result}
+\begin{table}[h]
+\centering
+\caption{CIFAR-10 test accuracy after 50 epochs.}
+\label{tab:main}
+\begin{tabular}{lcc}
+\toprule
+Model & Parameters & Test Accuracy \\
+\midrule
+MLP baseline & 887K & 55.4\% \\
+CNN+CINN (rank 32, 2 layers) & 301K & \textbf{75.1\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The CNN+CINN model outperforms the baseline by 19.7 percentage points while using approximately 34\% of the baseline's parameter count. We emphasize that this is a single architectural comparison on one dataset, and we treat it as an existence proof that the interference mechanism can be parameter-efficient in at least this setting, rather than as a claim of general superiority over linear layers.
+
+\subsection{Rank Threshold Effect}
+We swept the factorization rank $r$ used in the CIN layers and found a threshold below which the CINN model's advantage over the real-valued baseline disappears: for $r$ well below approximately $\sqrt{d_{\text{hidden}}}$ (with $d_{\text{hidden}} = 128$ in our setting, so $\sqrt{d_{\text{hidden}}} \approx 11$), interference provides no measurable benefit, and performance tracks a rank-matched real-valued low-rank layer. The advantage emerges once rank approaches and exceeds the observed threshold near $r \approx 32$ in our configuration. We interpret this as evidence that the low-rank amplitude and phase factors need enough degrees of freedom to encode phase relationships that are actually useful for the task; at very low rank, the phase factorization is too constrained to express meaningful interference patterns and the layer effectively degenerates toward its amplitude-only (real-valued) behavior.
+
+\subsection{Depth Collapse Beyond Two Layers}
+Stacking more than two CIN layers degrades performance rather than improving it, in contrast to the usual expectation that additional capacity helps up to a point. We attribute this to \textbf{phase error accumulation}: each CIN layer's output intensity (Eq.~\ref{eq:born}) discards phase information from the previous layer's complex state, so a new phase must be learned "from scratch" relative to the incoming real-valued signal at each layer. Errors or noise in this re-encoding compound through repeated $\cos/\sin$ evaluations across layers, and because $\cos$ and $\sin$ are bounded and periodic, small phase parameter errors do not attenuate the way small weight errors typically do in a linear layer -- they can instead alias to a very different effective phase. In our experiments, two CIN layers was consistently the point beyond which additional layers produced no further gains and often actively hurt accuracy.
+
+\section{Discussion}
+\label{sec:discussion}
+
+The central empirical finding of this paper is narrow but, we think, useful: replacing a subset of an MLP's linear layers with rank-factorized interference layers can substantially improve parameter efficiency on a standard image classification benchmark, provided the factorization rank clears a threshold related to the hidden dimensionality. This suggests the interference mechanism is not simply a reparameterization of a linear layer -- if it were, we would not expect a rank threshold effect, since a low-rank linear layer degrades gracefully and roughly monotonically as rank decreases, whereas the CINN model's advantage appears to switch on relatively sharply once ranks are large enough to support genuine phase diversity.
+
+The depth collapse result is a genuine limitation of the current formulation: the Born-rule readout used at the end of every CIN layer is convenient (it produces a real, non-negative signal compatible with any downstream real-valued layer) but destructive, discarding the phase of $\psi_j$ before the next layer. A natural direction for future work is a readout or inter-layer connection that preserves some phase information across layers, which could allow deeper CINN stacks without the observed collapse.
+
+We also note a practical training lesson that we expect to generalize beyond this specific architecture: whenever a model mixes parameters with different functional roles in a nonlinear combination rule (here, amplitude scaling vs.\ phase rotation), a single global learning rate and weight decay setting is not a reliable default, and per-group optimizer configuration should be treated as a first-class part of the model specification rather than an incidental hyperparameter choice.
+
+\subsection{Limitations}
+This study evaluates a single dataset (CIFAR-10) and a single task family (image classification via a small convolutional backbone). We have not yet evaluated CINN layers as a replacement for convolution itself, at larger scale, or on tasks beyond classification. The rank threshold and depth collapse effects are characterized empirically in this specific configuration and their generality to other data modalities or larger hidden dimensions is untested. The original experimental codebase and logs for this work were lost and the reported implementation was rebuilt from the documented architecture and training procedure; we report the results as originally obtained and intend to release a fully reproducible, from-scratch NumPy implementation alongside this paper.
+
+\section{Future Work}
+\label{sec:future}
+
+This paper is the first of a planned twelve-paper program studying Coherent Interference Neural Networks across architecture families. Planned directions include: (1) CIN-based attention mechanisms for transformer architectures, where phase could modulate token interactions in place of or alongside dot-product attention; (2) interference-based message passing for graph neural networks; (3) CIN units within recurrent architectures, where phase state could persist and evolve across time steps, potentially offering a natural mechanism for oscillatory memory; (4) CIN layers within reinforcement learning value and policy networks; (5) applications to natural language processing tasks where phase might encode relational or positional structure; and (6) generative models where interference-based layers could shape the structure of a generator's or encoder's latent interactions. Each is intended as a self-contained paper in the series, building on the CIN primitive established here.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduced the Coherent Interference Neuron, a low-rank, phase-augmented alternative to the standard weighted-sum neuron, and showed that integrating CIN layers into a small convolutional classifier improves CIFAR-10 accuracy substantially over a parameter-heavier real-valued baseline (75.1\% vs.\ 55.4\%, at roughly one-third the parameter count). We characterized a rank threshold below which the interference mechanism provides no benefit, and a depth collapse beyond two stacked CIN layers attributable to phase information loss in the Born-rule readout. We view this as an initial, encouraging data point for interference-based neural computation as a parameter-efficient primitive, and the first step in a broader research program extending the approach to a wide range of architectures and tasks.
+
+\section*{Acknowledgments}
+This work was conducted independently, outside of institutional affiliation.
+
+\bibliographystyle{unsrt}
+\begin{thebibliography}{9}
+
+\bibitem{trabelsi2018}
+C.~Trabelsi, O.~Bilaniuk, Y.~Zhang, D.~Serdyuk, S.~Subramanian, J.~F.~Santos, S.~Mehri, N.~Rostamzadeh, Y.~Bengio, and C.~J.~Pal.
+\textit{Deep Complex Networks}.
+International Conference on Learning Representations (ICLR), 2018.
+
+\bibitem{hu2021lora}
+E.~J.~Hu, Y.~Shen, P.~Wallis, Z.~Allen-Zhu, Y.~Li, S.~Wang, L.~Wang, and W.~Chen.
+\textit{LoRA: Low-Rank Adaptation of Large Language Models}.
+arXiv preprint arXiv:2106.09685, 2021.
+
+\bibitem{sitzmann2020siren}
+V.~Sitzmann, J.~N.~P.~Martel, A.~W.~Bergman, D.~B.~Lindell, and G.~Wetzstein.
+\textit{Implicit Neural Representations with Periodic Activation Functions}.
+Advances in Neural Information Processing Systems (NeurIPS), 2020.
+
+\bibitem{singer1999neuronal}
+W.~Singer.
+\textit{Neuronal Synchrony: A Versatile Code for the Definition of Relations?}
+Neuron, 24(1):49--65, 1999.
+
+\bibitem{krizhevsky2009cifar}
+A.~Krizhevsky.
+\textit{Learning Multiple Layers of Features from Tiny Images}.
+Technical report, University of Toronto, 2009.
+
+\end{thebibliography}
+
+\end{document}
